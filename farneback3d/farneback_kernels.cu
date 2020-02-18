@@ -25,17 +25,16 @@ __global__ void calcPolyCoeficients(const float *__restrict__ img3d,
 
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x >= imgWidth || y >= imgHeight)
+    if (x >= imgWidth || y >= imgHeight||z >= imgDepth)
         return;
 
     int halfX = patchSize / 2;
     int halfY = patchSize / 2;
     int halfZ = patchSize / 2;
 
-    for (int z = 0; z < imgDepth; z++)
-    {
-
+    
         float sum[NUM_COEFFICIENTS] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
         for (int filterIdxZ = 0; filterIdxZ < patchSize; filterIdxZ++)
         {
@@ -73,8 +72,7 @@ __global__ void calcPolyCoeficients(const float *__restrict__ img3d,
                 sumProduct += invG[j * NUM_COEFFICIENTS + i] * sum[i];
             }
             polyCoefficients[getImageIdx(x, y, z, imgWidth, imgHeight) + (j - 1) * imgHeight * imgWidth * imgDepth] = sumProduct;
-        }
-    }
+        }    
 }
 
 texture<fp_tex_float, cudaTextureType3D, cudaReadModeElementType> sourceTex;
@@ -90,13 +88,11 @@ __global__ void warpByFlowField(const float *__restrict__ flow3d,
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int imgSize = imgWidth * imgHeight * imgDepth;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x >= imgWidth || y >= imgHeight)
+    if (x >= imgWidth || y >= imgHeight||z >= imgDepth)
         return;
-
-    for (int z = 0; z < imgDepth; z++)
-    {
+        int imgSize = imgWidth * imgHeight * imgDepth;
         int imgIdx = getImageIdx(x, y, z, imgWidth, imgHeight);
         float flowX = flow3d[imgIdx + 0 * imgSize];
         float flowY = flow3d[imgIdx + 1 * imgSize];
@@ -105,8 +101,7 @@ __global__ void warpByFlowField(const float *__restrict__ flow3d,
         float3 warpedPos = {static_cast<float>(x) * spacingX + flowX + 0.5f,
                             static_cast<float>(y) * spacingY + flowY + 0.5f,
                             static_cast<float>(z) * spacingZ + flowZ + 0.5f};
-        interpolated[imgIdx] = tex3D(sourceTex, warpedPos.x, warpedPos.y, warpedPos.z);
-    }
+        interpolated[imgIdx] = tex3D(sourceTex, warpedPos.x, warpedPos.y, warpedPos.z);    
 }
 
 __global__ void FarnebackUpdateMatrices(float *__restrict__ R0,
@@ -120,14 +115,13 @@ __global__ void FarnebackUpdateMatrices(float *__restrict__ R0,
 
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x >= imgWidth || y >= imgHeight)
+    if (x >= imgWidth || y >= imgHeight||z >= imgDepth)
         return;
 
     int imgSize = imgWidth * imgHeight * imgDepth;
 
-    for (int z = 0; z < imgDepth; ++z)
-    {
         int imgIdx = getImageIdx(x, y, z, imgWidth, imgHeight);
 
         float a[3 + 3];
@@ -196,22 +190,23 @@ __global__ void FarnebackUpdateMatrices(float *__restrict__ R0,
         // m[9 * imgSize + imgIdx] = m6_;
         // m[10 * imgSize + imgIdx] = m7_;
         // m[11 * imgSize + imgIdx] = m8_;
-    }
+    
 }
 
-__global__ void solveEquationsCramer(float *__restrict__ M, float *__restrict__ flow3d, int imgWidth, int imgHeight, int imgDepth)
+__global__ void solveEquationsCramer(float *__restrict__ M, float *__restrict__ flow3d, int imgWidth, int imgHeight, int imgDepth, int flow2d)
 {
 
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x >= imgWidth || y >= imgHeight)
+    if (x >= imgWidth || y >= imgHeight||z >= imgDepth)
         return;
 
     int imgSize = imgWidth * imgHeight * imgDepth;
 
-    for (int z = 0; z < imgDepth; ++z)
-    {
+    //#for (int z = 0; z < imgDepth; ++z)
+    //{
         int imgIdx = getImageIdx(x, y, z, imgWidth, imgHeight);
         float m[6]; // symetric 3x3 matrix, i.e. independent 6 entries
         float h[3]; // right side
@@ -237,11 +232,22 @@ __global__ void solveEquationsCramer(float *__restrict__ M, float *__restrict__ 
         float b1 = h[1];
         float b2 = h[2];
 
-        float det = a0 * a5 * a5 - 2 * a3 * a4 * a5 + a1 * a4 * a4 + a2 * a3 * a3 - a0 * a1 * a2;
-        float invDet = 1.f / (det);
-        float flowX = -invDet * ((a1 * a2 - a5 * a5) * b0 + (a4 * a5 - a2 * a3) * b1 + (a3 * a5 - a1 * a4) * b2);
-        float flowY = invDet * ((a2 * a3 - a4 * a5) * b0 + (a4 * a4 - a0 * a2) * b1 + (a0 * a5 - a3 * a4) * b2);
-        float flowZ = invDet * ((a1 * a4 - a3 * a5) * b0 + (a0 * a5 - a3 * a4) * b1 + (a3 * a3 - a0 * a1) * b2);
+        float det;
+        float flowX, flowY,flowZ;
+        if(flow2d)//set of 2d flows
+        {
+            det = (a0 * a1 - a3 * a3);
+            flowX = 1.f / (det) * (a1 * b0 - a3 * b1);
+            flowY = 1.f / (det) * (-a3 * b0 + a0 * b1);
+            flowZ = 0;
+        }
+        else// 3d flow
+        {
+            det = a0 * a5 * a5 - 2 * a3 * a4 * a5 + a1 * a4 * a4 + a2 * a3 * a3 - a0 * a1 * a2;
+            flowX = -1.f / (det) * ((a1 * a2 - a5 * a5) * b0 + (a4 * a5 - a2 * a3) * b1 + (a3 * a5 - a1 * a4) * b2);
+            flowY = 1.f / (det) * ((a2 * a3 - a4 * a5) * b0 + (a4 * a4 - a0 * a2) * b1 + (a0 * a5 - a3 * a4) * b2);
+            flowZ = 1.f / (det) * ((a1 * a4 - a3 * a5) * b0 + (a0 * a5 - a3 * a4) * b1 + (a3 * a3 - a0 * a1) * b2);
+        }        
 
         if (fabsf(det) < 1e-2)
         {
@@ -250,7 +256,7 @@ __global__ void solveEquationsCramer(float *__restrict__ M, float *__restrict__ 
         flow3d[imgIdx + 0 * imgSize] = flowX;
         flow3d[imgIdx + 1 * imgSize] = flowY;
         flow3d[imgIdx + 2 * imgSize] = flowZ;
-    }
+    //}
 }
 // texture<fp_tex_float, cudaTextureType3D, cudaReadModeElementType> R1;
 

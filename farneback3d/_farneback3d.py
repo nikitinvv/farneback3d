@@ -18,7 +18,7 @@ from farneback3d._utils import divup
 import farneback3d._filtering
 
 _NUM_POLY_COEFFICIENTS = 10
-_MIN_VOL_SIZE = 32
+_MIN_VOL_SIZE = 1
 
 
 class Farneback:
@@ -57,7 +57,7 @@ class Farneback:
         self._max_resize_kernel_size = 9
 
         with open(os.path.join(os.path.dirname(__file__), 'farneback_kernels.cu')) as f:
-            read_data = f.read()
+            read_data = f.read()            
         f.closed
 
         mod = SourceModule(read_data)
@@ -108,9 +108,8 @@ class Farneback:
 
     def calc_flow(self,
                   cur_vol: np.ndarray,
-                  next_vol: np.ndarray
-                  ):
-
+                  next_vol: np.ndarray,
+                  flow2d=False):
         dim = len(cur_vol.shape)
 
         assert dim == 3, 'wrong dimension'
@@ -173,7 +172,7 @@ class Farneback:
                     I = imgs[i]
                 else:
                     I = farneback3d._filtering.smooth_cuda_gauss(imgs[i], sigma,
-                                                                 smooth_sz)
+                                                                 smooth_sz, flow2d)
                     I = self._resize(I, scaling=scale)
 
                 self._FarnebackPolyExp(I, R[i], self.poly_n, self.poly_sigma)
@@ -181,7 +180,7 @@ class Farneback:
             # dsareco.visualization.imshow(R[0])
             # dsareco.visualization.imshow(R[1])
 
-            self._FarnebackUpdateMatrices_gpu(R[0], R[1], flow_gpu, M)
+            #self._FarnebackUpdateMatrices_gpu(R[0], R[1], flow_gpu, M)
 
             # dsareco.visualization.imshow(M,"M")
 
@@ -189,7 +188,8 @@ class Farneback:
                 print('iteration %i' % i)
                 if self.use_gaussian_kernel:
                     self._FarnebackUpdateFlow_GaussianBlur_gpu(
-                        R[0], R[1], flow_gpu, M, self.winsize, i < self.num_iterations - 1)
+                        R[0], R[1], flow_gpu, M, self.winsize, i < self.num_iterations - 1, flow2d)
+                    
                 else:
                     raise ValueError('only use_gaussian_kernel implemented')
                 # dsareco.utils.imshow(np.moveaxis(flow,3,0),"%i, scale %i" %(i,k))
@@ -240,9 +240,9 @@ class Farneback:
 
         invG, G_half = self._FarnebackPrepareGaussian(n, sigma)
 
-        block = (32, 32, 1)
+        block = (16, 16, 4)
         grid = (int(divup(img_gpu.shape[2], block[0])),
-                int(divup(img_gpu.shape[1], block[1])), 1)
+                int(divup(img_gpu.shape[1], block[1])), int(divup(img_gpu.shape[0], block[2])))
 
         cuda.memcpy_htod(self._invG_gpu, invG)
         cuda.memcpy_htod(self._weights_gpu, G_half)
@@ -259,13 +259,12 @@ class Farneback:
 
         R1_warped_gpu = gpuarray.empty_like(R1_gpu)
 
-        block = (32, 32, 1)
+        block = (16, 16, 4)
         grid = (int(divup(flow_gpu.shape[3], block[0])),
-                int(divup(flow_gpu.shape[2], block[1])), 1)
-
+                int(divup(flow_gpu.shape[2], block[1])), int(divup(flow_gpu.shape[1], block[2])))
         for i in range(_NUM_POLY_COEFFICIENTS - 1):
             farneback3d._utils.ndarray_to_float_tex(
-                self._r1_texture, R1_gpu[i])
+                self._r1_texture, R1_gpu[i])                
             self._warp_kernel(
                 flow_gpu,
                 R1_warped_gpu[i],
@@ -275,7 +274,7 @@ class Farneback:
                 np.float32(1),
                 np.float32(1),
                 np.float32(1),
-                block=block, grid=grid)
+                block=block, grid=grid)            
 
         self._update_matrices_kernel(R0_gpu,
                                      R1_warped_gpu,
@@ -286,21 +285,21 @@ class Farneback:
                                      np.int32(flow_gpu.shape[1]),
                                      block=block, grid=grid)
 
-    def _FarnebackUpdateFlow_GaussianBlur_gpu(self, poly_coefficients0, poly_coefficients1, flow_gpu, M, winsize, update_matrices):
+    def _FarnebackUpdateFlow_GaussianBlur_gpu(self, poly_coefficients0, poly_coefficients1, flow_gpu, M, winsize, update_matrices, flow2d):
         sigma = self.winsize * 0.3
 
         M_filtered_gpu = gpuarray.GPUArray(M.shape, M.dtype)
 
         for i in range(M.shape[0]):
             farneback3d._filtering.smooth_cuda_gauss(
-                M[i], sigma, winsize, rtn_gpu=M_filtered_gpu[i])
+                M[i], sigma, winsize, rtn_gpu=M_filtered_gpu[i], flow2d=flow2d)
 
-        block = (32, 32, 1)
+        block = (16, 16, 4)
         grid = (int(divup(flow_gpu.shape[3], block[0])),
-                int(divup(flow_gpu.shape[2], block[1])), 1)
+                int(divup(flow_gpu.shape[2], block[1])), int(divup(flow_gpu.shape[1], block[2])))
 
         self._solve_equations_kernel(M_filtered_gpu, flow_gpu, np.int32(flow_gpu.shape[3]), np.int32(
-            flow_gpu.shape[2]), np.int32(flow_gpu.shape[1]), block=block, grid=grid)
+            flow_gpu.shape[2]), np.int32(flow_gpu.shape[1]), np.int32(flow2d), block=block, grid=grid)
 
         if update_matrices:
             self._FarnebackUpdateMatrices_gpu(
@@ -347,9 +346,9 @@ def warp_by_flow(vol, flow3d):
     rtn_gpu = gpuarray.GPUArray(vol.shape, vol.dtype)
     flow_gpu = gpuarray.to_gpu(flow3d)
 
-    block = (32, 32, 1)
+    block = (16, 16, 4)
     grid = (int(divup(flow3d.shape[3], block[0])),
-            int(divup(flow3d.shape[2], block[1])), 1)
+            int(divup(flow3d.shape[2], block[1])), int(divup(flow3d.shape[1], block[2])))
 
     interpolation_kernel(
         flow_gpu,

@@ -43,16 +43,16 @@ __global__ void convolve3d_gauss(float *__restrict__ in,
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
+
 
     int halfX = filterWidth / 2;
     int halfY = filterHeight / 2;
     int halfZ = filterDepth / 2;
 
-    if (x >= imgWidth || y >= imgHeight)
+    if (x >= imgWidth || y >= imgHeight || z >= imgDepth)
         return;
 
-    for (int z = 0; z < imgDepth; z++)
-    {
 
         float sum = 0.f;
         float sumCoefficients = 0.f;
@@ -63,7 +63,7 @@ __global__ void convolve3d_gauss(float *__restrict__ in,
             in[imgIdx] <= 1e-6)
         {
             out[imgIdx] = in[imgIdx];
-            continue;
+            return;
         }
 
         for (int filterIdxZ = 0; filterIdxZ < filterDepth; filterIdxZ++)
@@ -99,7 +99,7 @@ __global__ void convolve3d_gauss(float *__restrict__ in,
         }
         float outVal = sumCoefficients > 1e-6 ? sum / sumCoefficients : 0.f;
         out[imgIdx] = outVal;
-    }
+    
 }
 
 __global__ void convolve3d_gauss_with_mask(float *__restrict__ in,
@@ -118,16 +118,16 @@ __global__ void convolve3d_gauss_with_mask(float *__restrict__ in,
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
+
 
     int halfX = filterWidth / 2;
     int halfY = filterHeight / 2;
     int halfZ = filterDepth / 2;
 
-    if (x >= imgWidth || y >= imgHeight)
+    if (x >= imgWidth || y >= imgHeight || z >= imgDepth)
         return;
 
-    for (int z = 0; z < imgDepth; z++)
-    {
 
         float sum = 0.f;
         float sumCoefficients = 0.f;
@@ -138,7 +138,7 @@ __global__ void convolve3d_gauss_with_mask(float *__restrict__ in,
                                                           in[imgIdx] <= 1e-6))
         {
             out[imgIdx] = in[imgIdx];
-            continue;
+            return;
         }
 
         for (int filterIdxZ = 0; filterIdxZ < filterDepth; filterIdxZ++)
@@ -173,14 +173,14 @@ __global__ void convolve3d_gauss_with_mask(float *__restrict__ in,
             }
         }
         float outVal = sumCoefficients > 1e-6 ? sum / sumCoefficients : 0.f;
-        out[imgIdx] = outVal;
-    }
+        out[imgIdx] = outVal;    
 }
-
+/*
 __global__ void convolve2d_gauss(float *__restrict__ in,
                                  float *__restrict__ out,
                                  int imgWidth,
                                  int imgHeight,
+                                 int imgDepth,
                                  int filterWidth,
                                  int filterHeight,
                                  float sigmaX,
@@ -188,11 +188,12 @@ __global__ void convolve2d_gauss(float *__restrict__ in,
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
     int halfX = filterWidth / 2;
     int halfY = filterHeight / 2;
 
-    if (x >= imgWidth || y >= imgHeight)
+    if (x >= imgWidth || y >= imgHeight || z >= imgDepth)
         return;
 
     float sum = 0.f;
@@ -212,11 +213,71 @@ __global__ void convolve2d_gauss(float *__restrict__ in,
             float2 delta{static_cast<float>(idxX - x), static_cast<float>(idxY - y)};
             float2 sigma{sigmaX, sigmaY};
             float coefficient = getCoefficientGauss2d(delta, sigma);
-            float inVal = in[idxY * imgWidth + idxX];
+            float inVal = in[z * imgHeight * imgWidth + idxY * imgWidth + idxX];
             sum += inVal * coefficient;
             sumCoefficients += coefficient;
         }
     }
     float outVal = sum / sumCoefficients;
-    out[y * imgWidth + x] = outVal;
+    out[z * imgHeight * imgWidth + y * imgWidth + x] = outVal;
 }
+*/
+
+__global__ void convolve2d_gauss(float *__restrict__ in,
+                                 float *__restrict__ out,
+                                 int imgWidth,
+                                 int imgHeight,
+                                 int imgDepth,
+                                 int filterWidth,
+                                 int filterHeight,
+                                 float sigmaX,
+                                 float sigmaY)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    int halfX = filterWidth / 2;
+    int halfY = filterHeight / 2;
+
+    if (x >= imgWidth || y >= imgHeight)
+        return;
+    /*float s[128]={};
+    for (int z=0;z<imgDepth;z++)
+    {   
+        s[z] = in[z * imgHeight * imgWidth + y * imgWidth + x];
+    }
+*/
+    //float sum[32] = {};
+    float sumCoefficients = 0.f;
+    //for (int z=0;z<imgDepth;z++)
+    //{   
+        //out[z * imgHeight * imgWidth + y * imgWidth + x] = 0;
+    //}
+    for (int filterIdxY = 0; filterIdxY < filterHeight; filterIdxY++)
+    {
+        int idxY = y + filterIdxY - halfY;
+        if (idxY < 0 || idxY >= imgHeight)
+            continue;
+        for (int filterIdxX = 0; filterIdxX < filterWidth; filterIdxX++)
+        {
+            int idxX = x + filterIdxX - halfX;
+            if (idxX < 0 || idxX >= imgWidth)
+                continue;
+
+            float2 delta{static_cast<float>(idxX - x), static_cast<float>(idxY - y)};
+            float2 sigma{sigmaX, sigmaY};
+            float coefficient = getCoefficientGauss2d(delta, sigma);
+            sumCoefficients += coefficient;
+            for (int z=0;z<imgDepth;z++)
+            {   
+                float inVal = in[z * imgHeight * imgWidth + idxY * imgWidth + idxX];
+                out[z * imgHeight * imgWidth + y * imgWidth + x]  += inVal * coefficient;                
+            }
+        }
+    }
+    for (int z=0;z<imgDepth;z++)
+    {   
+        out[z * imgHeight * imgWidth + y * imgWidth + x] /=sumCoefficients;
+    }
+}
+

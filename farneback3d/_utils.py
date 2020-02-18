@@ -21,9 +21,7 @@ def ndarray_to_float_tex(tex_ref, ndarray, address_mode=cuda.address_mode.BORDER
     else:
         raise TypeError(
             'ndarray must be numpy.ndarray or pycuda.gpuarray.GPUArray')
-
     cuda.TextureReference.set_array(tex_ref, cu_array)
-
     cuda.TextureReference.set_address_mode(
         tex_ref, 0, address_mode)
     if ndarray.ndim >= 2:
@@ -36,7 +34,7 @@ def ndarray_to_float_tex(tex_ref, ndarray, address_mode=cuda.address_mode.BORDER
         tex_ref, filter_mode)
     tex_ref.set_flags(tex_ref.get_flags(
     ) & ~cuda.TRSF_NORMALIZED_COORDINATES & ~cuda.TRSF_READ_AS_INTEGER)
-
+    
 
 with open(os.path.join(os.path.dirname(__file__), 'resize.cu')) as f:
     _read_data = f.read()
