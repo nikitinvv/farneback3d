@@ -17,7 +17,7 @@ def test_moving_cube():
 
     movement_vector = [0.3, 0.1, 1]
 
-    vol0 = np.zeros([60, 60, 60], np.float32)
+    vol0 = np.zeros([128, 128, 128], np.float32)
     vol0[10:15, 20:25, 30:35] = 100.
     # flow_ground_truth = 4* np.ones([*vol0.shape,3], np.float32)
     flow_ground_truth = np.stack([movement_vector[2] * np.ones(vol0.shape, np.float32), movement_vector[1] * np.ones(
@@ -26,7 +26,7 @@ def test_moving_cube():
     vol1 = farneback3d.warp_by_flow(vol0, flow_ground_truth)
 
     optflow = farneback3d.Farneback(
-        levels=5, num_iterations=5, poly_n=5, quit_at_level=-1, use_gpu=True, fast_gpu_scaling=True)
+        levels=2, num_iterations=5, poly_n=5, quit_at_level=-1, use_gpu=True, fast_gpu_scaling=True)
     flow = optflow.calc_flow(vol0, vol1)
 
     for axis in range(len(movement_vector)):
@@ -67,6 +67,6 @@ def test_default_values():
 
 
 if __name__ == "__main__":
-    # test_moving_cube()
+    test_moving_cube()
     # test_moving_cube_larger_distance()
-    test_default_values()
+    #test_default_values()
